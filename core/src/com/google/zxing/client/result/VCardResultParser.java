@@ -16,12 +16,15 @@
 
 package com.google.zxing.client.result;
 
+import android.util.Log;
+
 import com.google.zxing.Result;
 
 import java.io.ByteArrayOutputStream;
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -44,6 +47,9 @@ public final class VCardResultParser extends ResultParser {
   private static final Pattern UNESCAPED_SEMICOLONS = Pattern.compile("(?<!\\\\);+");
   private static final Pattern COMMA = Pattern.compile(",");
   private static final Pattern SEMICOLON_OR_COMMA = Pattern.compile("[;,]");
+  
+  private ArrayList<HashMap<String, String>> mCustom_event;
+  private String mRawText;
 
   @Override
   public AddressBookParsedResult parse(Result result) {
@@ -51,6 +57,7 @@ public final class VCardResultParser extends ResultParser {
     // to throw out everything else we parsed just because this was omitted. In fact, Eclair
     // is doing just that, and we can't parse its contacts without this leniency.
     String rawText = getMassagedText(result);
+    mRawText = rawText;
     Matcher m = BEGIN_VCARD.matcher(rawText);
     if (!m.find() || m.start() != 0) {
       return null;
@@ -69,6 +76,21 @@ public final class VCardResultParser extends ResultParser {
     List<List<String>> addresses = matchVCardPrefixedField("ADR", rawText, true, true);
     List<String> org = matchSingleVCardPrefixedField("ORG", rawText, true, true);
     List<String> birthday = matchSingleVCardPrefixedField("BDAY", rawText, true, false);
+    ParseCustomEvent();
+    if(mCustom_event != null)
+    {
+        if(birthday == null)
+        {
+            birthday = new ArrayList<String>();
+        }
+        for(int i = 0; i < mCustom_event.size(); i ++)
+        {
+            if((mCustom_event.get(i).get("type").equals("3"))
+                    || (mCustom_event.get(i).get("type").equals("4"))){
+                birthday.add(mCustom_event.get(i).get("date"));
+            }
+        }
+    }
     if (birthday != null && !isLikeVCardDate(birthday.get(0))) {
       birthday = null;
     }
@@ -350,6 +372,51 @@ public final class VCardResultParser extends ResultParser {
       newName.append(' ');
       newName.append(components[i]);
     }
+  }
+  
+  private void ParseCustomEvent()
+  {
+      if(mCustom_event == null)
+      {
+          mCustom_event = new ArrayList<HashMap<String, String>>();
+      }
+      else
+      {
+          mCustom_event.clear();
+      }
+      HashMap<String, String> map = new HashMap<String, String>();
+      
+      List<String> temp_custom = matchSingleVCardPrefixedField("X-ANDROID-CUSTOM", mRawText, true, false);
+      for(int i = 0; i < temp_custom.size(); i ++){
+          Log.d("ParseCustomEvent", temp_custom.get(i));
+          Matcher matcher_date = /*VCARD_LIKE_DATE*/Pattern.compile("\\d{4}-?\\d{2}-?\\d{2}").matcher(temp_custom.get(i));
+          Matcher matcher_type = /*VCARD_ESCAPES*/Pattern.compile("([\\d])" + ";;;;;").matcher(temp_custom.get(i));
+          String date = null;
+          String type = null;
+          if(matcher_date.find()/*matches()*/)
+          {
+              date = matcher_date.group();
+              Log.d("ParseCustomEvent", "date = " + date);
+          }
+          else
+          {
+              Log.d("ParseCustomEvent", "matcher_date not match");
+          }
+          if(matcher_type.find()/*matches()*/)
+          {
+              type = matcher_type.group().substring(0, 1);
+              Log.d("ParseCustomEvent", "type = " + type);
+          }
+          else
+          {
+              Log.d("ParseCustomEvent", "matcher_type not match");
+          }
+          
+          map.put("date", date);
+          map.put("type", type);
+          
+          mCustom_event.add(map);
+      }
   }
 
 }
