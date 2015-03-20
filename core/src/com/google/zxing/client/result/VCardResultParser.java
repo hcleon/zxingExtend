@@ -30,393 +30,612 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Parses contact information formatted according to the VCard (2.1) format. This is not a complete
- * implementation but should parse information as commonly encoded in 2D barcodes.
- *
+ * Parses contact information formatted according to the VCard (2.1) format.
+ * This is not a complete implementation but should parse information as
+ * commonly encoded in 2D barcodes.
+ * 
  * @author Sean Owen
  */
 public final class VCardResultParser extends ResultParser {
 
-  private static final Pattern BEGIN_VCARD = Pattern.compile("BEGIN:VCARD", Pattern.CASE_INSENSITIVE);
-  private static final Pattern VCARD_LIKE_DATE = Pattern.compile("\\d{4}-?\\d{2}-?\\d{2}");
-  private static final Pattern CR_LF_SPACE_TAB = Pattern.compile("\r\n[ \t]");
-  private static final Pattern NEWLINE_ESCAPE = Pattern.compile("\\\\[nN]");
-  private static final Pattern VCARD_ESCAPES = Pattern.compile("\\\\([,;\\\\])");
-  private static final Pattern EQUALS = Pattern.compile("=");
-  private static final Pattern SEMICOLON = Pattern.compile(";");
-  private static final Pattern UNESCAPED_SEMICOLONS = Pattern.compile("(?<!\\\\);+");
-  private static final Pattern COMMA = Pattern.compile(",");
-  private static final Pattern SEMICOLON_OR_COMMA = Pattern.compile("[;,]");
-  
-  private ArrayList<HashMap<String, String>> mCustom_event;
-  private String mRawText;
+    private static final Pattern BEGIN_VCARD = Pattern.compile("BEGIN:VCARD",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern VCARD_LIKE_DATE = Pattern.compile("\\d{4}-?\\d{2}-?\\d{2}");
+    private static final Pattern CR_LF_SPACE_TAB = Pattern.compile("\r\n[ \t]");
+    private static final Pattern NEWLINE_ESCAPE = Pattern.compile("\\\\[nN]");
+    private static final Pattern VCARD_ESCAPES = Pattern.compile("\\\\([,;\\\\])");
+    private static final Pattern EQUALS = Pattern.compile("=");
+    private static final Pattern SEMICOLON = Pattern.compile(";");
+    private static final Pattern UNESCAPED_SEMICOLONS = Pattern.compile("(?<!\\\\);+");
+    private static final Pattern COMMA = Pattern.compile(",");
+    private static final Pattern SEMICOLON_OR_COMMA = Pattern.compile("[;,]");
 
-  @Override
-  public AddressBookParsedResult parse(Result result) {
-    // Although we should insist on the raw text ending with "END:VCARD", there's no reason
-    // to throw out everything else we parsed just because this was omitted. In fact, Eclair
-    // is doing just that, and we can't parse its contacts without this leniency.
-    String rawText = getMassagedText(result);
-    mRawText = rawText;
-    Matcher m = BEGIN_VCARD.matcher(rawText);
-    if (!m.find() || m.start() != 0) {
-      return null;
+    private ArrayList<HashMap<String, String>> mCustom_event;
+    private String mRawText;
+    private static final String DATE = "date";
+    private static final String TYPE = "type";
+    private static final String CUSTOM = "custom";
+
+    @Override
+    public AddressBookParsedResult parse(Result result) {
+        // Although we should insist on the raw text ending with "END:VCARD",
+        // there's no reason
+        // to throw out everything else we parsed just because this was omitted.
+        // In fact, Eclair
+        // is doing just that, and we can't parse its contacts without this
+        // leniency.
+        String rawText = getMassagedText(result);
+        mRawText = rawText;
+        Log.d("ParseCustomEvent", " " + mRawText);
+        Matcher m = BEGIN_VCARD.matcher(rawText);
+        if (!m.find() || m.start() != 0) {
+            return null;
+        }
+        List<List<String>> names = matchVCardPrefixedField("FN", rawText, true, false);
+        if (names == null) {
+            // If no display names found, look for regular name fields and
+            // format them
+            names = matchVCardPrefixedField("N", rawText, true, false);
+            formatNames(names);
+        }
+        List<String> nicknameString = matchSingleVCardPrefixedField("NICKNAME", rawText, true,
+                false);
+        String[] nicknames = nicknameString == null ? null : COMMA.split(nicknameString.get(0));
+        List<List<String>> phoneNumbers = matchVCardPrefixedField("TEL", rawText, true, false);
+        List<List<String>> emails = matchVCardPrefixedField("EMAIL", rawText, true, false);
+        List<String> note = matchSingleVCardPrefixedField("NOTE", rawText, false, false);
+        List<List<String>> addresses = matchVCardPrefixedField("ADR", rawText, true, true);
+        List<String> org = matchSingleVCardPrefixedField("ORG", rawText, true, true);
+        List<String> birthday = matchSingleVCardPrefixedField("BDAY", rawText, true, false);
+        if (birthday != null && !isLikeVCardDate(birthday.get(0))) {
+            birthday = null;
+        }
+        List<String> title = matchSingleVCardPrefixedField("TITLE", rawText, true, false);
+        List<List<String>> urls = matchVCardPrefixedField("URL", rawText, true, false);
+        List<String> instantMessenger = matchSingleVCardPrefixedField("IMPP", rawText, true, false);
+        List<String> geoString = matchSingleVCardPrefixedField("GEO", rawText, true, false);
+        String[] geo = geoString == null ? null : SEMICOLON_OR_COMMA.split(geoString.get(0));
+        if (geo != null && geo.length != 2) {
+            geo = null;
+        }
+
+        //parse X-ANDROID-CUSTOM field and patch them
+        try{
+            ParseCustomEvent();
+        }catch(Exception e){
+            if(e != null)
+            {
+                Log.e("ParseCustomEvent", e.toString());
+            }
+            
+        }
+
+        return new AddressBookParsedResult(toPrimaryValues(names),
+                nicknames,
+                null,
+                toPrimaryValues(phoneNumbers),
+                toTypes(phoneNumbers),
+                toPrimaryValues(emails),
+                toTypes(emails),
+                toPrimaryValue(instantMessenger),
+                toPrimaryValue(note),
+                toPrimaryValues(addresses),
+                toTypes(addresses),
+                toPrimaryValue(org),
+                toPrimaryValue(birthday),
+                toPrimaryValue(title),
+                toPrimaryValues(urls),
+                geo,
+                mCustom_event);
     }
-    List<List<String>> names = matchVCardPrefixedField("FN", rawText, true, false);
-    if (names == null) {
-      // If no display names found, look for regular name fields and format them
-      names = matchVCardPrefixedField("N", rawText, true, false);
-      formatNames(names);
-    }
-    List<String> nicknameString = matchSingleVCardPrefixedField("NICKNAME", rawText, true, false);
-    String[] nicknames = nicknameString == null ? null : COMMA.split(nicknameString.get(0));
-    List<List<String>> phoneNumbers = matchVCardPrefixedField("TEL", rawText, true, false);
-    List<List<String>> emails = matchVCardPrefixedField("EMAIL", rawText, true, false);
-    List<String> note = matchSingleVCardPrefixedField("NOTE", rawText, false, false);
-    List<List<String>> addresses = matchVCardPrefixedField("ADR", rawText, true, true);
-    List<String> org = matchSingleVCardPrefixedField("ORG", rawText, true, true);
-    List<String> birthday = matchSingleVCardPrefixedField("BDAY", rawText, true, false);
-    ParseCustomEvent();
-    if(mCustom_event != null)
+
+    static List<List<String>> matchVCardPrefixedField(CharSequence prefix,
+            String rawText,
+            boolean trim,
+            boolean parseFieldDivider) 
     {
-        if(birthday == null)
+        List<List<String>> matches = null;
+        int i = 0;
+        int max = rawText.length();
+
+        while (i < max)
         {
-            birthday = new ArrayList<String>();
+            // At start or after newline, match prefix, followed by optional
+            // metadata
+            // (led by ;) ultimately ending in colon
+            Matcher matcher = Pattern.compile("(?:^|\n)" + prefix + "(?:;([^:]*))?:",
+                    Pattern.CASE_INSENSITIVE).matcher(rawText);
+            if (i > 0)
+            {
+                i--; // Find from i-1 not i since looking at the preceding
+                     // character
+            }
+            if (!matcher.find(i))
+            {
+                break;
+            }
+            i = matcher.end(0); // group 0 = whole pattern; end(0) is past final
+                                // colon
+
+            String metadataString = matcher.group(1); // group 1 = metadata
+                                                      // substring
+            
+            Log.d("ParseCustomEvent", "matchVCardPrefixedField  " + i + " " + matcher.group(0) + "  " + matcher.group(1) + "  " + prefix);
+            List<String> metadata = null;
+            boolean quotedPrintable = false;
+            String quotedPrintableCharset = null;
+            if (metadataString != null)
+            {
+                for (String metadatum : SEMICOLON.split(metadataString))
+                {
+                    if (metadata == null)
+                    {
+                        metadata = new ArrayList<String>(1);
+                    }
+                    metadata.add(metadatum);
+                    String[] metadatumTokens = EQUALS.split(metadatum, 2);
+                    if (metadatumTokens.length > 1)
+                    {
+                        String key = metadatumTokens[0];
+                        String value = metadatumTokens[1];
+                        if ("ENCODING".equalsIgnoreCase(key)
+                                && "QUOTED-PRINTABLE".equalsIgnoreCase(value)) 
+                        {
+                            quotedPrintable = true;
+                        } 
+                        else if ("CHARSET".equalsIgnoreCase(key))
+                        {
+                            quotedPrintableCharset = value;
+                        }
+                    }
+                }
+            }
+
+            int matchStart = i; // Found the start of a match here
+
+            while ((i = rawText.indexOf((int) '\n', i)) >= 0) { // Really, end
+                                                                // in \r\n
+                if (i < rawText.length() - 1 && // But if followed by tab or
+                                                // space,
+                        (rawText.charAt(i + 1) == ' ' || // this is only a
+                                                         // continuation
+                        rawText.charAt(i + 1) == '\t')) 
+                {
+                    i += 2; // Skip \n and continutation whitespace
+                } 
+                else if (quotedPrintable && // If preceded by = in quoted
+                                              // printable
+                        ((i >= 1 && rawText.charAt(i - 1) == '=') || // this is
+                                                                     // a
+                                                                     // continuation
+                        (i >= 2 && rawText.charAt(i - 2) == '='))) 
+                {
+                    i++; // Skip \n
+                } 
+                else 
+                {
+                    break;
+                }
+            }
+
+            if (i < 0)
+            {
+                // No terminating end character? uh, done. Set i such that loop
+                // terminates and break
+                i = max;
+            } 
+            else if (i > matchStart) 
+            {
+                // found a match
+                if (matches == null) 
+                {
+                    matches = new ArrayList<List<String>>(1); // lazy init
+                }
+                if (i >= 1 && rawText.charAt(i - 1) == '\r') 
+                {
+                    i--; // Back up over \r, which really should be thereExeption
+                }
+                String element = rawText.substring(matchStart, i);
+                Log.d("ParseCustomEvent", "element = " + element + " i = " + i);
+                if (trim) 
+                {
+                    element = element.trim();
+                }
+                if (quotedPrintable)
+                {
+                    element = decodeQuotedPrintable(element, quotedPrintableCharset);
+                    if (parseFieldDivider) 
+                    {
+                        element = UNESCAPED_SEMICOLONS.matcher(element).replaceAll("\n").trim();
+                    }
+                } 
+                else 
+                {
+                    if (parseFieldDivider) 
+                    {
+                        element = UNESCAPED_SEMICOLONS.matcher(element).replaceAll("\n").trim();
+                    }
+                    element = CR_LF_SPACE_TAB.matcher(element).replaceAll("");
+                    element = NEWLINE_ESCAPE.matcher(element).replaceAll("\n");
+                    element = VCARD_ESCAPES.matcher(element).replaceAll("$1");
+                }
+                if (metadata == null) 
+                {
+                    List<String> match = new ArrayList<String>(1);
+                    match.add(element);
+                    matches.add(match);
+                } 
+                else 
+                {
+                    metadata.add(0, element);
+                    matches.add(metadata);
+                }
+                i++;
+            } 
+            else 
+            {
+                i++;
+            }
+
         }
-        for(int i = 0; i < mCustom_event.size(); i ++)
+
+        return matches;
+    }
+
+    private static String decodeQuotedPrintable(CharSequence value, String charset) {
+        int length = value.length();
+        StringBuilder result = new StringBuilder(length);
+        ByteArrayOutputStream fragmentBuffer = new ByteArrayOutputStream();
+        for (int i = 0; i < length; i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '\r':
+                case '\n':
+                    break;
+                case '=':
+                    if (i < length - 2) {
+                        char nextChar = value.charAt(i + 1);
+                        if (nextChar != '\r' && nextChar != '\n') {
+                            char nextNextChar = value.charAt(i + 2);
+                            int firstDigit = parseHexDigit(nextChar);
+                            int secondDigit = parseHexDigit(nextNextChar);
+                            if (firstDigit >= 0 && secondDigit >= 0) {
+                                fragmentBuffer.write((firstDigit << 4) + secondDigit);
+                            } // else ignore it, assume it was incorrectly
+                              // encoded
+                            i += 2;
+                        }
+                    }
+                    break;
+                default:
+                    maybeAppendFragment(fragmentBuffer, charset, result);
+                    result.append(c);
+            }
+        }
+        maybeAppendFragment(fragmentBuffer, charset, result);
+        return result.toString();
+    }
+
+    private static void maybeAppendFragment(ByteArrayOutputStream fragmentBuffer,
+            String charset,
+            StringBuilder result) {
+        if (fragmentBuffer.size() > 0) {
+            byte[] fragmentBytes = fragmentBuffer.toByteArray();
+            String fragment;
+            if (charset == null) {
+                fragment = new String(fragmentBytes);
+            } else {
+                try {
+                    fragment = new String(fragmentBytes, charset);
+                } catch (UnsupportedEncodingException e) {
+                    // Yikes, well try anyway:
+                    fragment = new String(fragmentBytes);
+                }
+            }
+            fragmentBuffer.reset();
+            result.append(fragment);
+        }
+    }
+
+    static List<String> matchSingleVCardPrefixedField(CharSequence prefix,
+            String rawText,
+            boolean trim,
+            boolean parseFieldDivider) 
+    {
+        List<List<String>> values = matchVCardPrefixedField(prefix, rawText, trim,
+                parseFieldDivider);
+        return values == null || values.isEmpty() ? null : values.get(0);
+    }
+
+    private static String toPrimaryValue(List<String> list) {
+        return list == null || list.isEmpty() ? null : list.get(0);
+    }
+
+    private static String[] toPrimaryValues(Collection<List<String>> lists) {
+        if (lists == null || lists.isEmpty()) {
+            return null;
+        }
+        List<String> result = new ArrayList<String>(lists.size());
+        for (List<String> list : lists) {
+            String value = list.get(0);
+            if (value != null && value.length() > 0) {
+                result.add(value);
+            }
+        }
+        return result.toArray(new String[lists.size()]);
+    }
+
+    private static String[] toTypes(Collection<List<String>> lists) {
+        if (lists == null || lists.isEmpty()) {
+            return null;
+        }
+        List<String> result = new ArrayList<String>(lists.size());
+        for (List<String> list : lists) {
+            String type = null;
+            for (int i = 1; i < list.size(); i++) {
+                String metadatum = list.get(i);
+                int equals = metadatum.indexOf('=');
+                if (equals < 0) {
+                    // take the whole thing as a usable label
+                    type = metadatum;
+                    break;
+                }
+                if ("TYPE".equalsIgnoreCase(metadatum.substring(0, equals))) {
+                    type = metadatum.substring(equals + 1);
+                    break;
+                }
+            }
+            result.add(type);
+        }
+        return result.toArray(new String[lists.size()]);
+    }
+
+    private static boolean isLikeVCardDate(CharSequence value) {
+        return value == null || VCARD_LIKE_DATE.matcher(value).matches();
+    }
+
+    /**
+     * Formats name fields of the form "Public;John;Q.;Reverend;III" into a form
+     * like "Reverend John Q. Public III".
+     * 
+     * @param names name values to format, in place
+     */
+    private static void formatNames(Iterable<List<String>> names) {
+        if (names != null) {
+            for (List<String> list : names) {
+                String name = list.get(0);
+                String[] components = new String[5];
+                int start = 0;
+                int end;
+                int componentIndex = 0;
+                while (componentIndex < components.length - 1
+                        && (end = name.indexOf(';', start)) > 0) {
+                    components[componentIndex] = name.substring(start, end);
+                    componentIndex++;
+                    start = end + 1;
+                }
+                components[componentIndex] = name.substring(start);
+                StringBuilder newName = new StringBuilder(100);
+                maybeAppendComponent(components, 3, newName);
+                maybeAppendComponent(components, 1, newName);
+                maybeAppendComponent(components, 2, newName);
+                maybeAppendComponent(components, 0, newName);
+                maybeAppendComponent(components, 4, newName);
+                list.set(0, newName.toString().trim());
+            }
+        }
+    }
+
+    private static void maybeAppendComponent(String[] components, int i, StringBuilder newName) {
+        if (components[i] != null) {
+            newName.append(' ');
+            newName.append(components[i]);
+        }
+    }
+
+    private void ParseCustomEvent()
+    {
+        if (mCustom_event == null)
         {
-            if((mCustom_event.get(i).get("type").equals("3"))
-                    || (mCustom_event.get(i).get("type").equals("4"))){
-                birthday.add(mCustom_event.get(i).get("date"));
+            mCustom_event = new ArrayList<HashMap<String, String>>();
+        }
+        else
+        {
+            mCustom_event.clear();
+        }
+        HashMap<String, String> map;// = new HashMap<String, String>();
+
+        List<String> temp_custom = matchCustomVCardPrefixedField("X-ANDROID-CUSTOM", mRawText);
+        if(temp_custom == null)
+        {
+            Log.d("ParseCustomEvent", "temp_custom = null");
+            return;
+        }
+        for (int i = 0; i < temp_custom.size(); i++) {
+            Log.d("ParseCustomEvent", temp_custom.get(i) + "  " + temp_custom.size());
+            
+            map = new HashMap<String, String>();
+            Matcher matcher = Pattern.compile(";(.*?);;;;;;;").matcher(temp_custom.get(i));
+            if(matcher.find())
+            {
+                String metedata = matcher.group();
+                Log.d("ParseCustomEvent", "metedata = " + metedata);
+                Matcher matcher_temp = Pattern.compile(";(.*?);").matcher(metedata.subSequence(0, metedata.length() - 6));
+                int index = 0;
+                int map_loc = 0;
+                while(matcher_temp.find(index))
+                {
+                    index = matcher_temp.end() - 1;
+                    map_loc ++;
+                    int temp = matcher_temp.groupCount();
+                    
+                    String data = matcher_temp.group().substring(1, matcher_temp.group().length() - 1);
+                    
+                    Log.d("ParseCustomEvent", "count = " + temp + " " + matcher_temp.group() + "  " + data);
+                    switch(map_loc)
+                    {
+                    case 1:
+                        map.put(DATE, data);
+                        break;
+                    case 2:
+                        map.put(TYPE, data);
+                        break;
+                    case 3:
+                        map.put(CUSTOM, data);
+                        break;
+                    default:
+                        break;
+                    }
+                }
+                
+                mCustom_event.add(map);
             }
         }
+        
+       // patchCustomEvent();
     }
-    if (birthday != null && !isLikeVCardDate(birthday.get(0))) {
-      birthday = null;
-    }
-    List<String> title = matchSingleVCardPrefixedField("TITLE", rawText, true, false);
-    List<List<String>> urls = matchVCardPrefixedField("URL", rawText, true, false);
-    List<String> instantMessenger = matchSingleVCardPrefixedField("IMPP", rawText, true, false);
-    List<String> geoString = matchSingleVCardPrefixedField("GEO", rawText, true, false);
-    String[] geo = geoString == null ? null : SEMICOLON_OR_COMMA.split(geoString.get(0));
-    if (geo != null && geo.length != 2) {
-      geo = null;
-    }
-    return new AddressBookParsedResult(toPrimaryValues(names),
-                                       nicknames,
-                                       null, 
-                                       toPrimaryValues(phoneNumbers), 
-                                       toTypes(phoneNumbers),
-                                       toPrimaryValues(emails),
-                                       toTypes(emails),
-                                       toPrimaryValue(instantMessenger),
-                                       toPrimaryValue(note),
-                                       toPrimaryValues(addresses),
-                                       toTypes(addresses),
-                                       toPrimaryValue(org),
-                                       toPrimaryValue(birthday),
-                                       toPrimaryValue(title),
-                                       toPrimaryValues(urls),
-                                       geo);
-  }
-
-  static List<List<String>> matchVCardPrefixedField(CharSequence prefix,
-                                                    String rawText,
-                                                    boolean trim,
-                                                    boolean parseFieldDivider) {
-    List<List<String>> matches = null;
-    int i = 0;
-    int max = rawText.length();
-
-    while (i < max) {
-
-      // At start or after newline, match prefix, followed by optional metadata 
-      // (led by ;) ultimately ending in colon
-      Matcher matcher = Pattern.compile("(?:^|\n)" + prefix + "(?:;([^:]*))?:",
-                                        Pattern.CASE_INSENSITIVE).matcher(rawText);
-      if (i > 0) {
-        i--; // Find from i-1 not i since looking at the preceding character
-      }
-      if (!matcher.find(i)) {
-        break;
-      }
-      i = matcher.end(0); // group 0 = whole pattern; end(0) is past final colon
-
-      String metadataString = matcher.group(1); // group 1 = metadata substring
-      List<String> metadata = null;
-      boolean quotedPrintable = false;
-      String quotedPrintableCharset = null;
-      if (metadataString != null) {
-        for (String metadatum : SEMICOLON.split(metadataString)) {
-          if (metadata == null) {
-            metadata = new ArrayList<String>(1);
-          }
-          metadata.add(metadatum);
-          String[] metadatumTokens = EQUALS.split(metadatum, 2);
-          if (metadatumTokens.length > 1) {
-            String key = metadatumTokens[0];
-            String value = metadatumTokens[1];
-            if ("ENCODING".equalsIgnoreCase(key) && "QUOTED-PRINTABLE".equalsIgnoreCase(value)) {
-              quotedPrintable = true;
-            } else if ("CHARSET".equalsIgnoreCase(key)) {
-              quotedPrintableCharset = value;
+    
+    private List<String> matchCustomVCardPrefixedField(CharSequence prefix, String rawText)
+    {
+        int i = 0;
+        int max = rawText.length();
+        List<String> x_android_custom = null;
+        
+        while (i < max) 
+        {
+            // At start or after newline, match prefix, followed by optional
+            // metadata
+            // (led by ;) ultimately ending in colon
+            Matcher matcher = Pattern.compile("(?:^|\n)" + prefix + "(?:;([^:]*))?:",
+                    Pattern.CASE_INSENSITIVE).matcher(rawText);
+            if (i > 0) {
+                i--; // Find from i-1 not i since looking at the preceding
+                     // character
             }
-          }
-        }
-      }
-
-      int matchStart = i; // Found the start of a match here
-
-      while ((i = rawText.indexOf((int) '\n', i)) >= 0) { // Really, end in \r\n
-        if (i < rawText.length() - 1 &&           // But if followed by tab or space,
-            (rawText.charAt(i+1) == ' ' ||        // this is only a continuation
-             rawText.charAt(i+1) == '\t')) {
-          i += 2; // Skip \n and continutation whitespace
-        } else if (quotedPrintable &&             // If preceded by = in quoted printable
-                   ((i >= 1 && rawText.charAt(i-1) == '=') || // this is a continuation
-                    (i >= 2 && rawText.charAt(i-2) == '='))) {
-          i++; // Skip \n
-        } else {
-          break;
-        }
-      }
-
-      if (i < 0) {
-        // No terminating end character? uh, done. Set i such that loop terminates and break
-        i = max;
-      } else if (i > matchStart) {
-        // found a match
-        if (matches == null) {
-          matches = new ArrayList<List<String>>(1); // lazy init
-        }
-        if (i >= 1 && rawText.charAt(i-1) == '\r') {
-          i--; // Back up over \r, which really should be there
-        }
-        String element = rawText.substring(matchStart, i);
-        if (trim) {
-          element = element.trim();
-        }
-        if (quotedPrintable) {
-          element = decodeQuotedPrintable(element, quotedPrintableCharset);
-          if (parseFieldDivider) {
-            element = UNESCAPED_SEMICOLONS.matcher(element).replaceAll("\n").trim();
-          }
-        } else {
-          if (parseFieldDivider) {
-            element = UNESCAPED_SEMICOLONS.matcher(element).replaceAll("\n").trim();
-          }
-          element = CR_LF_SPACE_TAB.matcher(element).replaceAll("");
-          element = NEWLINE_ESCAPE.matcher(element).replaceAll("\n");
-          element = VCARD_ESCAPES.matcher(element).replaceAll("$1");
-        }
-        if (metadata == null) {
-          List<String> match = new ArrayList<String>(1);
-          match.add(element);
-          matches.add(match);
-        } else {
-          metadata.add(0, element);
-          matches.add(metadata);
-        }
-        i++;
-      } else {
-        i++;
-      }
-
-    }
-
-    return matches;
-  }
-
-  private static String decodeQuotedPrintable(CharSequence value, String charset) {
-    int length = value.length();
-    StringBuilder result = new StringBuilder(length);
-    ByteArrayOutputStream fragmentBuffer = new ByteArrayOutputStream();
-    for (int i = 0; i < length; i++) {
-      char c = value.charAt(i);
-      switch (c) {
-        case '\r':
-        case '\n':
-          break;
-        case '=':
-          if (i < length - 2) {
-            char nextChar = value.charAt(i+1);
-            if (nextChar != '\r' && nextChar != '\n') {
-              char nextNextChar = value.charAt(i+2);
-              int firstDigit = parseHexDigit(nextChar);
-              int secondDigit = parseHexDigit(nextNextChar);
-              if (firstDigit >= 0 && secondDigit >= 0) {
-                fragmentBuffer.write((firstDigit << 4) + secondDigit);
-              } // else ignore it, assume it was incorrectly encoded
-              i += 2;
+            if (!matcher.find(i)) {
+                break;
             }
-          }
-          break;
-        default:
-          maybeAppendFragment(fragmentBuffer, charset, result);
-          result.append(c);
-      }
-    }
-    maybeAppendFragment(fragmentBuffer, charset, result);
-    return result.toString();
-  }
+            i = matcher.end(0); // group 0 = whole pattern; end(0) is past final
+                                // colon
 
-  private static void maybeAppendFragment(ByteArrayOutputStream fragmentBuffer,
-                                          String charset,
-                                          StringBuilder result) {
-    if (fragmentBuffer.size() > 0) {
-      byte[] fragmentBytes = fragmentBuffer.toByteArray();
-      String fragment;
-      if (charset == null) {
-        fragment = new String(fragmentBytes);
-      } else {
-        try {
-          fragment = new String(fragmentBytes, charset);
-        } catch (UnsupportedEncodingException e) {
-          // Yikes, well try anyway:
-          fragment = new String(fragmentBytes);
+            String metadataString = matcher.group(1); // group 1 = metadata
+                                                      // substring
+            Log.d("ParseCustomEvent", "matchVCardPrefixedField  " + i + "  " + metadataString + "  " + prefix);
+
+            int matchStart = i; // Found the start of a match here
+            
+            while ((i = rawText.indexOf((int) '\n', i)) >= 0) 
+            { // Really, end
+                                                                // in \r\n
+                if (i < rawText.length() - 1 && // But if followed by tab or
+                                                // space,
+                        (rawText.charAt(i + 1) == ' ' || // this is only a
+                                                         // continuation
+                        rawText.charAt(i + 1) == '\t')) 
+                {
+                    i += 2; // Skip \n and continutation whitespace
+                }
+                else 
+                {
+                    break;
+                }
+            }
+
+            if (i < 0) 
+            {
+                // No terminating end character? uh, done. Set i such that loop
+                // terminates and break
+                i = max;
+            } 
+            else if (i > matchStart) 
+            {
+                // found a match
+//                if (matches == null) 
+//                {
+//                    matches = new ArrayList<>(1); // lazy init
+//                }
+                if (i >= 1 && rawText.charAt(i - 1) == '\r') 
+                {
+                    i--; // Back up over \r, which really should be there
+                }
+                String element = rawText.substring(matchStart, i);
+                Log.d("ParseCustomEvent", "element = " + element + " i = " + i);
+                if(prefix == "X-ANDROID-CUSTOM")
+                {
+                    if(x_android_custom == null)
+                    {
+                        x_android_custom = new ArrayList<String>();
+                    }
+                    x_android_custom.add(element);
+                }
+                
+                i++;
+            } 
+            else 
+            {
+                i++;
+            }
+
         }
-      }
-      fragmentBuffer.reset();
-      result.append(fragment);
-    }
-  }
 
-  static List<String> matchSingleVCardPrefixedField(CharSequence prefix,
-                                                    String rawText,
-                                                    boolean trim,
-                                                    boolean parseFieldDivider) {
-    List<List<String>> values = matchVCardPrefixedField(prefix, rawText, trim, parseFieldDivider);
-    return values == null || values.isEmpty() ? null : values.get(0);
-  }
-  
-  private static String toPrimaryValue(List<String> list) {
-    return list == null || list.isEmpty() ? null : list.get(0);
-  }
-  
-  private static String[] toPrimaryValues(Collection<List<String>> lists) {
-    if (lists == null || lists.isEmpty()) {
-      return null;
+        return x_android_custom;
     }
-    List<String> result = new ArrayList<String>(lists.size());
-    for (List<String> list : lists) {
-      String value = list.get(0);
-      if (value != null && value.length() > 0) {
-        result.add(value);
-      }
-    }
-    return result.toArray(new String[lists.size()]);
-  }
-  
-  private static String[] toTypes(Collection<List<String>> lists) {
-    if (lists == null || lists.isEmpty()) {
-      return null;
-    }
-    List<String> result = new ArrayList<String>(lists.size());
-    for (List<String> list : lists) {
-      String type = null;
-      for (int i = 1; i < list.size(); i++) {
-        String metadatum = list.get(i);
-        int equals = metadatum.indexOf('=');
-        if (equals < 0) {
-          // take the whole thing as a usable label
-          type = metadatum;
-          break;
-        }
-        if ("TYPE".equalsIgnoreCase(metadatum.substring(0, equals))) {
-          type = metadatum.substring(equals + 1);
-          break;
-        }
-      }
-      result.add(type);
-    }
-    return result.toArray(new String[lists.size()]);
-  }
-
-  private static boolean isLikeVCardDate(CharSequence value) {
-    return value == null || VCARD_LIKE_DATE.matcher(value).matches();
-  }
-
-  /**
-   * Formats name fields of the form "Public;John;Q.;Reverend;III" into a form like
-   * "Reverend John Q. Public III".
-   *
-   * @param names name values to format, in place
-   */
-  private static void formatNames(Iterable<List<String>> names) {
-    if (names != null) {
-      for (List<String> list : names) {
-        String name = list.get(0);
-        String[] components = new String[5];
-        int start = 0;
-        int end;
-        int componentIndex = 0;
-        while (componentIndex < components.length - 1 && (end = name.indexOf(';', start)) > 0) {
-          components[componentIndex] = name.substring(start, end);
-          componentIndex++;
-          start = end + 1;
-        }
-        components[componentIndex] = name.substring(start);
-        StringBuilder newName = new StringBuilder(100);
-        maybeAppendComponent(components, 3, newName);
-        maybeAppendComponent(components, 1, newName);
-        maybeAppendComponent(components, 2, newName);
-        maybeAppendComponent(components, 0, newName);
-        maybeAppendComponent(components, 4, newName);
-        list.set(0, newName.toString().trim());
-      }
-    }
-  }
-
-  private static void maybeAppendComponent(String[] components, int i, StringBuilder newName) {
-    if (components[i] != null) {
-      newName.append(' ');
-      newName.append(components[i]);
-    }
-  }
-  
-  private void ParseCustomEvent()
-  {
-      if(mCustom_event == null)
-      {
-          mCustom_event = new ArrayList<HashMap<String, String>>();
-      }
-      else
-      {
-          mCustom_event.clear();
-      }
-      HashMap<String, String> map = new HashMap<String, String>();
-      
-      List<String> temp_custom = matchSingleVCardPrefixedField("X-ANDROID-CUSTOM", mRawText, true, false);
-      for(int i = 0; i < temp_custom.size(); i ++){
-          Log.d("ParseCustomEvent", temp_custom.get(i));
-          Matcher matcher_date = /*VCARD_LIKE_DATE*/Pattern.compile("\\d{4}-?\\d{2}-?\\d{2}").matcher(temp_custom.get(i));
-          Matcher matcher_type = /*VCARD_ESCAPES*/Pattern.compile("([\\d])" + ";;;;;").matcher(temp_custom.get(i));
-          String date = null;
-          String type = null;
-          if(matcher_date.find()/*matches()*/)
-          {
-              date = matcher_date.group();
-              Log.d("ParseCustomEvent", "date = " + date);
-          }
-          else
-          {
-              Log.d("ParseCustomEvent", "matcher_date not match");
-          }
-          if(matcher_type.find()/*matches()*/)
-          {
-              type = matcher_type.group().substring(0, 1);
-              Log.d("ParseCustomEvent", "type = " + type);
-          }
-          else
-          {
-              Log.d("ParseCustomEvent", "matcher_type not match");
-          }
-          
-          map.put("date", date);
-          map.put("type", type);
-          
-          mCustom_event.add(map);
-      }
-  }
+    
+//    private void patchCustomEvent()
+//    {
+//        if(mCustom_event != null)
+//        {
+//            if (other == null)
+//            {
+//                other = new ArrayList<HashMap<String, String>>();
+//            }
+//            else
+//            {
+//                other.clear();
+//            }
+//            
+//            if (anniversary == null)
+//            {
+//                anniversary = new ArrayList<HashMap<String, String>>();
+//            }
+//            else
+//            {
+//                anniversary.clear();
+//            }
+//            
+//            if (custom == null)
+//            {
+//                custom = new ArrayList<HashMap<String, String>>();
+//            }
+//            else
+//            {
+//                custom.clear();
+//            }
+//            
+//            for(int i = 0; i < mCustom_event.size(); i ++)
+//            {
+//                if(mCustom_event.get(i).get("type").equals("0"))
+//                {
+//                    custom.add(mCustom_event.get(i));
+//                }
+//                if(mCustom_event.get(i).get("type").equals("1"))
+//                {
+//                    anniversary.add(mCustom_event.get(i));
+//                }
+//                if(mCustom_event.get(i).get("type").equals("2"))
+//                {
+//                    other.add(mCustom_event.get(i));
+//                }
+//                if(mCustom_event.get(i).get("type").equals("3"))
+//                {
+//                    
+//                }
+//                if(mCustom_event.get(i).get("type").equals("4"))
+//                {
+//                    lunarbday = mCustom_event.get(i).get("date");
+//                }
+//            }
+//        }
+//    }
 
 }

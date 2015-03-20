@@ -66,6 +66,7 @@ public final class BizcardResultParser extends AbstractDoCoMoResultParser {
                                        null,
                                        title,
                                        null,
+                                       null,
                                        null);
   }
 

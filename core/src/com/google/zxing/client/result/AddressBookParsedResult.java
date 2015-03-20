@@ -16,6 +16,9 @@
 
 package com.google.zxing.client.result;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+
 /**
  * @author Sean Owen
  */
@@ -37,6 +40,7 @@ public final class AddressBookParsedResult extends ParsedResult {
   private final String title;
   private final String[] urls;
   private final String[] geo;
+  private final ArrayList<HashMap<String, String>> custom;
 
   public AddressBookParsedResult(String[] names,
                                  String[] phoneNumbers,
@@ -60,6 +64,7 @@ public final class AddressBookParsedResult extends ParsedResult {
          null,
          null,
          null,
+         null,
          null);
   }
 
@@ -78,7 +83,8 @@ public final class AddressBookParsedResult extends ParsedResult {
                                  String birthday,
                                  String title,
                                  String[] urls,
-                                 String[] geo) {
+                                 String[] geo, 
+                                 ArrayList<HashMap<String, String>> custom) {
     super(ParsedResultType.ADDRESSBOOK);
     this.names = names;
     this.nicknames = nicknames;
@@ -96,6 +102,7 @@ public final class AddressBookParsedResult extends ParsedResult {
     this.title = title;
     this.urls = urls;
     this.geo = geo;
+    this.custom = custom;
   }
 
   public String[] getNames() {
@@ -184,6 +191,14 @@ public final class AddressBookParsedResult extends ParsedResult {
    */
   public String[] getGeo() {
     return geo;
+  }
+  
+  /**
+   * @return custom date information list
+   */
+  public ArrayList<HashMap<String, String>> getCustom()
+  {
+      return custom;
   }
 
   @Override

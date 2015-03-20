@@ -64,6 +64,7 @@ public final class AddressBookAUResultParser extends ResultParser {
                                        null,
                                        null,
                                        null,
+                                       null,
                                        null);
   }
 

@@ -77,6 +77,7 @@ public final class AddressBookDoCoMoResultParser extends AbstractDoCoMoResultPar
                                        birthday,
                                        null,
                                        urls,
+                                       null,
                                        null);
   }
 
