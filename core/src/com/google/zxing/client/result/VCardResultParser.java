@@ -40,7 +40,8 @@ public final class VCardResultParser extends ResultParser {
 
     private static final Pattern BEGIN_VCARD = Pattern.compile("BEGIN:VCARD",
             Pattern.CASE_INSENSITIVE);
-    private static final Pattern VCARD_LIKE_DATE = Pattern.compile("\\d{4}-?\\d{2}-?\\d{2}");
+    //private static final Pattern VCARD_LIKE_DATE = Pattern.compile("\\d{4}-?\\d{2}-?\\d{2}");
+    private static final Pattern VCARD_LIKE_DATE = Pattern.compile("(\\d{4}-?\\d{2}-?\\d{2})|(\\d{2}-?\\d{2})");
     private static final Pattern CR_LF_SPACE_TAB = Pattern.compile("\r\n[ \t]");
     private static final Pattern NEWLINE_ESCAPE = Pattern.compile("\\\\[nN]");
     private static final Pattern VCARD_ESCAPES = Pattern.compile("\\\\([,;\\\\])");
@@ -87,9 +88,14 @@ public final class VCardResultParser extends ResultParser {
         List<List<String>> addresses = matchVCardPrefixedField("ADR", rawText, true, true);
         List<String> org = matchSingleVCardPrefixedField("ORG", rawText, true, true);
         List<String> birthday = matchSingleVCardPrefixedField("BDAY", rawText, true, false);
-        if (birthday != null && !isLikeVCardDate(birthday.get(0))) {
-            birthday = null;
+        try{
+            if (birthday != null && !isLikeVCardDate(birthday.get(0))) {
+                birthday = null;
+            }
+        }catch(Exception e){
+            Log.e("ParseCustomEvent", e.toString());
         }
+        
         List<String> title = matchSingleVCardPrefixedField("TITLE", rawText, true, false);
         List<List<String>> urls = matchVCardPrefixedField("URL", rawText, true, false);
         List<String> instantMessenger = matchSingleVCardPrefixedField("IMPP", rawText, true, false);
